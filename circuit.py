@@ -361,153 +361,119 @@ class Circuit:
 
         return i_f,fault_voltage
 
-    def calculate_asym_fault(self, fault_type, faulted_bus: str, Zf=0.0):
+    def calculate_asym_fault(self, fault_type, faulted_bus: str, Zf=0.0, dlg_phases='bc'):
         import numpy as np
         import pandas as pd
 
-        print("\n>>> ENTERED calculate_asym_fault <<<\n")
+        print(f"\n>>> ENTERED calculate_asym_fault ({fault_type.upper()} FAULT) <<<\n")
 
         ordered_buses = list(self.buses.keys())
         b_idx = ordered_buses.index(faulted_bus)
-
         bus_indices = {bus_name: idx for idx, bus_name in enumerate(ordered_buses)}
 
-        # ======== Convert Ybuses from DataFrame to NumPy arrays ===========
-        print("[DEBUG] Converting Ybuses from DataFrame to NumPy...")
+        Y0_np = np.array([[self.zero_ybus.loc[bi, bj] for bj in ordered_buses] for bi in ordered_buses],
+                         dtype=np.complex128)
+        Y1_np = np.array([[self.ybus.loc[bi, bj] for bj in ordered_buses] for bi in ordered_buses], dtype=np.complex128)
+        Y2_np = np.array([[self.negative_ybus.loc[bi, bj] for bj in ordered_buses] for bi in ordered_buses],
+                         dtype=np.complex128)
 
-        Y0_np = np.array([
-            [self.zero_ybus.loc[bi, bj] for bj in ordered_buses]
-            for bi in ordered_buses
-        ], dtype=np.complex128)
-        Y1_np = np.array([
-            [self.ybus.loc[bi, bj] for bj in ordered_buses]
-            for bi in ordered_buses
-        ], dtype=np.complex128)
-        Y2_np = np.array([
-            [self.negative_ybus.loc[bi, bj] for bj in ordered_buses]
-            for bi in ordered_buses
-        ], dtype=np.complex128)
-
-        print("[DEBUG] Shapes of Ybus matrices:", Y0_np.shape, Y1_np.shape, Y2_np.shape)
-
-        # ======== Symmetrize ===========
-        print("[DEBUG] Symmetrizing Ybuses...")
         Y0_np = (Y0_np + Y0_np.T.conj()) / 2
         Y1_np = (Y1_np + Y1_np.T.conj()) / 2
         Y2_np = (Y2_np + Y2_np.T.conj()) / 2
 
-        # ======== Check diagonals and find alive buses ===========
-        print("[DEBUG] Checking diagonal values of Ybuses...")
         threshold = 1e-6
         alive_buses = [i for i in range(len(Y0_np)) if np.abs(Y0_np[i, i]) > threshold]
-
-        print("[DEBUG] Alive buses (nonzero sequence admittance):", [ordered_buses[i] for i in alive_buses])
-
         if b_idx not in alive_buses:
             raise ValueError(f"Faulted bus {faulted_bus} is isolated in zero-sequence network!")
 
-        # Map full bus index to reduced index
-        bus_to_reduced_idx = {orig_idx: reduced_idx for reduced_idx, orig_idx in enumerate(alive_buses)}
+        bus_to_reduced_idx = {orig_idx: red_idx for red_idx, orig_idx in enumerate(alive_buses)}
         b_idx_reduced = bus_to_reduced_idx[b_idx]
 
-        # ======== Reduce Ybuses ===========
-        Y0_reduced = Y0_np[np.ix_(alive_buses, alive_buses)]
-        Y1_reduced = Y1_np[np.ix_(alive_buses, alive_buses)]
-        Y2_reduced = Y2_np[np.ix_(alive_buses, alive_buses)]
+        Y0_r = Y0_np[np.ix_(alive_buses, alive_buses)]
+        Y1_r = Y1_np[np.ix_(alive_buses, alive_buses)]
+        Y2_r = Y2_np[np.ix_(alive_buses, alive_buses)]
 
-        # ======== Solve for Thevenin Impedances ===========
-        print("[DEBUG] Solving Ybuses for Thevenin impedance...")
+        e = np.zeros(len(alive_buses), dtype=complex)
+        e[b_idx_reduced] = 1.0
+        Z0 = np.linalg.solve(Y0_r, e)[b_idx_reduced]
+        Z1 = np.linalg.solve(Y1_r, e)[b_idx_reduced]
+        Z2 = np.linalg.solve(Y2_r, e)[b_idx_reduced]
 
-        e_vec = np.zeros(len(alive_buses), dtype=complex)
-        e_vec[b_idx_reduced] = 1.0
+        print(f"[DEBUG] Z0 = {Z0}, Z1 = {Z1}, Z2 = {Z2}")
 
-        z0_col = np.linalg.solve(Y0_reduced, e_vec)
-        z1_col = np.linalg.solve(Y1_reduced, e_vec)
-        z2_col = np.linalg.solve(Y2_reduced, e_vec)
+        # === Get prefault voltage from Newton-Raphson result ===
+        Vf = self.buses[faulted_bus].vpu * np.exp(1j * np.deg2rad(self.buses[faulted_bus].delta))
+        print(f"[DEBUG] V_prefault = {Vf:.5f} ∠ {np.angle(Vf, deg=True):.2f}°")
 
-        Z0 = z0_col[b_idx_reduced]
-        Z1 = z1_col[b_idx_reduced]
-        Z2 = z2_col[b_idx_reduced]
-
-        print(f"[DEBUG] Z0 at {faulted_bus}: {Z0}")
-        print(f"[DEBUG] Z1 at {faulted_bus}: {Z1}")
-        print(f"[DEBUG] Z2 at {faulted_bus}: {Z2}")
-
-        # ======== Prefault Voltage ===========
-        V_prefault = self.buses[faulted_bus].vpu * np.exp(1j * np.deg2rad(self.buses[faulted_bus].delta))
-        print(f"[DEBUG] Prefault Vpu at {faulted_bus}: {V_prefault:.6f}")
-
-        # ======== Calculate Fault Currents ===========
         if fault_type.lower() == "slg":
             denom = Z0 + Z1 + Z2 + 3 * Zf
-            I_seq = V_prefault / denom
+            I_seq = Vf / denom
             I0 = I1 = I2 = I_seq
+
         elif fault_type.lower() == "ll":
             denom = Z1 + Z2 + Zf
-            I1 = V_prefault / denom
+            I1 = Vf / denom
             I2 = -I1
             I0 = 0
-        elif fault_type.lower() == "dlg":
-            num = V_prefault * (Z1 + Z2 + Zf)
-            denom = (Z0 * (Z1 + Z2 + Zf)) + (Z1 * Z2) + (Zf * (Z1 + Z2))
-            I0 = num / denom
-            I1 = I0
-            I2 = I0
-        else:
-            raise ValueError(f"Invalid fault type '{fault_type}'")
 
-        # ======== Sequence to Phase Transformation ===========
+        elif fault_type.lower() == "dlg":
+            # Proper DLG model using equations shown
+            num = Vf
+            denom = Z1 + (Z2 * (Z0 + 3 * Zf)) / (Z2 + Z0 + 3 * Zf)
+            I1 = num / denom
+            I2 = -I1 * (Z0 + 3 * Zf) / (Z2 + Z0 + 3 * Zf)
+            I0 = -I1 * Z2 / (Z0 + 3 * Zf + Z2)
+        else:
+            raise ValueError(f"Unsupported fault type: {fault_type}")
+
         a = np.exp(2j * np.pi / 3)
         T_inv = np.array([
             [1, 1, 1],
             [1, a ** 2, a],
             [1, a, a ** 2]
         ])
+
         Iabc = T_inv @ np.array([I0, I1, I2])
 
-        print("\n[DEBUG] Fault currents (phases):")
-        for phase, val in zip(['A', 'B', 'C'], Iabc):
-            print(f"  Phase {phase}: {abs(val):.6f} p.u. @ {np.angle(val, deg=True):.2f}°")
+        print("\n[DEBUG] Fault Currents (Ia, Ib, Ic):")
+        for ph, val in zip(['A', 'B', 'C'], Iabc):
+            print(f"  I{ph}: {abs(val):.6f} ∠ {np.angle(val, deg=True):.2f}°")
 
-        # ======== Calculate Voltages at All Buses ===========
         volt_012 = np.zeros((3, len(ordered_buses)), dtype=complex)
-        busK_zmatrix = np.zeros((3, 3), dtype=complex)
         I_n = np.array([[I0], [I1], [I2]])
-        vF_matrix = np.array([[0], [1], [0]])
 
-        for bus_k in ordered_buses:
-            k_idx = bus_indices[bus_k]
-            if k_idx not in alive_buses:
-                volt_012[:, k_idx] = 0
+        for k, bus_k in enumerate(ordered_buses):
+            if k not in alive_buses:
+                volt_012[:, k] = 0
                 continue
 
-            k_idx_reduced = bus_to_reduced_idx[k_idx]
+            k_idx_r = bus_to_reduced_idx[k]
+            e_k = np.zeros(len(alive_buses), dtype=complex)
+            e_k[k_idx_r] = 1.0
 
-            # Solve for mutual impedance terms
-            e_vec_k = np.zeros(len(alive_buses), dtype=complex)
-            e_vec_k[k_idx_reduced] = 1.0
+            zkn0 = np.linalg.solve(Y0_r, e_k)[b_idx_reduced]
+            zkn1 = np.linalg.solve(Y1_r, e_k)[b_idx_reduced]
+            zkn2 = np.linalg.solve(Y2_r, e_k)[b_idx_reduced]
 
-            zkn0_col = np.linalg.solve(Y0_reduced, e_vec_k)
-            zkn1_col = np.linalg.solve(Y1_reduced, e_vec_k)
-            zkn2_col = np.linalg.solve(Y2_reduced, e_vec_k)
+            z_matrix = np.diag([zkn0, zkn1, zkn2])
+            V_k_prefault = self.buses[bus_k].vpu * np.exp(1j * np.deg2rad(self.buses[bus_k].delta))
+            vF_matrix = np.array([[0], [V_k_prefault], [0]])
+            v012 = (vF_matrix - z_matrix @ I_n).flatten()
+            volt_012[:, k] = v012
 
-            zkn0 = zkn0_col[b_idx_reduced]
-            zkn1 = zkn1_col[b_idx_reduced]
-            zkn2 = zkn2_col[b_idx_reduced]
+        T = np.array([
+            [1, 1, 1],
+            [1, a, a ** 2],
+            [1, a ** 2, a]
+        ])
+        phase_voltages = T @ volt_012
 
-            busK_zmatrix[0, 0] = zkn0
-            busK_zmatrix[1, 1] = zkn1
-            busK_zmatrix[2, 2] = zkn2
-
-            vk_012 = vF_matrix - np.matmul(busK_zmatrix, I_n)
-            volt_012[0, k_idx] = vk_012[0, 0]
-            volt_012[1, k_idx] = vk_012[1, 0]
-            volt_012[2, k_idx] = vk_012[2, 0]
-
-        phase_voltages = T_inv @ volt_012
-
-        print("\n[DEBUG] Phase voltages (rows=Va, Vb, Vc; columns=buses):\n")
-        print(np.round(phase_voltages, 5))
+        print("\n[DEBUG] Phase Voltages at All Buses (Magnitude ∠ Angle):\n")
+        for idx, bus in enumerate(ordered_buses):
+            Va, Vb, Vc = phase_voltages[:, idx]
+            print(f"{bus}:")
+            print(f"  Va = {abs(Va):.5f} ∠ {np.angle(Va, deg=True):6.2f}°")
+            print(f"  Vb = {abs(Vb):.5f} ∠ {np.angle(Vb, deg=True):6.2f}°")
+            print(f"  Vc = {abs(Vc):.5f} ∠ {np.angle(Vc, deg=True):6.2f}°")
 
         return {"Ia": Iabc[0], "Ib": Iabc[1], "Ic": Iabc[2]}, (I0, I1, I2)
-

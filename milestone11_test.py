@@ -87,9 +87,10 @@ print("\nzero ybus:\n", circuit1.zero_ybus,"\n")
 #print("\nfault_current:\n",fault_current)
 #print("\nfault_voltage:\n",fault_voltage)
 
+print(circuit1.ybus)
+
 # === Stabilize ALL sequence Ybuses ===
 epsilon = .28
-
 for idx in range(len(circuit1.zero_ybus)):
     circuit1.zero_ybus.iloc[idx, idx] += epsilon
     circuit1.ybus.iloc[idx, idx] += epsilon   # <<< Add to positive sequence too
@@ -97,8 +98,23 @@ for idx in range(len(circuit1.zero_ybus)):
 
 # === Run asymmetrical fault ===
 asym_fault_current, sequence_currents = circuit1.calculate_asym_fault("slg", "Bus3", Zf=0.0)
-
 print("\nAsymmetrical Fault Currents (SLG) at Bus3:")
 print(f"Ia: {asym_fault_current['Ia']}")
 print(f"Ib: {asym_fault_current['Ib']}")
 print(f"Ic: {asym_fault_current['Ic']}")
+
+# === Run LINE-TO-LINE (LL) fault at Bus3 ===
+print("\n=== LINE-TO-LINE (LL) FAULT at Bus3 ===")
+ll_fault_current, _ = circuit1.calculate_asym_fault("ll", "Bus3", Zf=0.0)
+print("\nAsymmetrical Fault Currents (LL) at Bus3:")
+print(f"Ia: {ll_fault_current['Ia']}")
+print(f"Ib: {ll_fault_current['Ib']}")
+print(f"Ic: {ll_fault_current['Ic']}")
+
+# === Run DOUBLE LINE-TO-GROUND (DLG) fault at Bus3 ===
+print("\n=== DOUBLE LINE-TO-GROUND (DLG) FAULT at Bus3 ===")
+dlg_fault_current, _ = circuit1.calculate_asym_fault("dlg", "Bus3", Zf=0.0, dlg_phases="bc")
+print("\nAsymmetrical Fault Currents (DLG) at Bus3:")
+print(f"Ia: {dlg_fault_current['Ia']}")
+print(f"Ib: {dlg_fault_current['Ib']}")
+print(f"Ic: {dlg_fault_current['Ic']}")
