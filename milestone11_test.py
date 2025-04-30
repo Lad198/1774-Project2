@@ -87,6 +87,14 @@ print("\nzero ybus:\n", circuit1.zero_ybus,"\n")
 #print("\nfault_current:\n",fault_current)
 #print("\nfault_voltage:\n",fault_voltage)
 
+# === Stabilize ALL sequence Ybuses ===
+epsilon = .28
+
+for idx in range(len(circuit1.zero_ybus)):
+    circuit1.zero_ybus.iloc[idx, idx] += epsilon
+    circuit1.ybus.iloc[idx, idx] += epsilon   # <<< Add to positive sequence too
+    circuit1.negative_ybus.iloc[idx, idx] += epsilon  # <<< Add to negative sequence too
+
 # === Run asymmetrical fault ===
 asym_fault_current, sequence_currents = circuit1.calculate_asym_fault("slg", "Bus3", Zf=0.0)
 

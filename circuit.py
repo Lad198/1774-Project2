@@ -361,20 +361,20 @@ class Circuit:
 
         return i_f,fault_voltage
 
-    def calculate_asym_fault(self, fault_type, faulted_bus:str, Zf=0.0):
+    def calculate_asym_fault(self, fault_type, faulted_bus: str, Zf=0.0):
         import numpy as np
         import pandas as pd
 
-        print("\n>>> ENTERED calculate_asym_fault")
+        print("\n>>> ENTERED calculate_asym_fault <<<\n")
 
         ordered_buses = list(self.buses.keys())
-        b_idx = ordered_buses.index(faulted_bus) #index of the faulted bus
+        b_idx = ordered_buses.index(faulted_bus)
 
-        bus_indices = {bus_name: idx for idx, bus_name in enumerate(ordered_buses)} #get a list of indices from the ordered_buses list
+        bus_indices = {bus_name: idx for idx, bus_name in enumerate(ordered_buses)}
 
+        # ======== Convert Ybuses from DataFrame to NumPy arrays ===========
+        print("[DEBUG] Converting Ybuses from DataFrame to NumPy...")
 
-
-        #convert zero, negative, and negative? ybus matrices from dataframe to numPy arrays
         Y0_np = np.array([
             [self.zero_ybus.loc[bi, bj] for bj in ordered_buses]
             for bi in ordered_buses
@@ -388,46 +388,75 @@ class Circuit:
             for bi in ordered_buses
         ], dtype=np.complex128)
 
-        #calcualte the z0, z1, and z2 buses (they are numpy buses)
-        z0_np = np.linalg.inv(Y0_np)
-        z1_np = np.linalg.inv(Y1_np)
-        z2_np = np.linalg.inv(Y2_np)
+        print("[DEBUG] Shapes of Ybus matrices:", Y0_np.shape, Y1_np.shape, Y2_np.shape)
 
-        # Just invert diagonal terms directly — all in per-unit already
-        Z0_diag_inv = 1 / Y0_np[b_idx][b_idx]
-        Z1_diag_inv = 1 / Y1_np[b_idx][b_idx]
-        Z2_diag_inv = 1 / Y2_np[b_idx][b_idx]
+        # ======== Symmetrize ===========
+        print("[DEBUG] Symmetrizing Ybuses...")
+        Y0_np = (Y0_np + Y0_np.T.conj()) / 2
+        Y1_np = (Y1_np + Y1_np.T.conj()) / 2
+        Y2_np = (Y2_np + Y2_np.T.conj()) / 2
 
-        print(f"Y0_np[{b_idx},{b_idx}] = {Y0_np[b_idx][b_idx]}")
-        print(f"Expected 1 / Y0 = {Z0_diag_inv}")
-        print(f"Z0[Bus] = {Z0_diag_inv}")
+        # ======== Check diagonals and find alive buses ===========
+        print("[DEBUG] Checking diagonal values of Ybuses...")
+        threshold = 1e-6
+        alive_buses = [i for i in range(len(Y0_np)) if np.abs(Y0_np[i, i]) > threshold]
 
+        print("[DEBUG] Alive buses (nonzero sequence admittance):", [ordered_buses[i] for i in alive_buses])
+
+        if b_idx not in alive_buses:
+            raise ValueError(f"Faulted bus {faulted_bus} is isolated in zero-sequence network!")
+
+        # Map full bus index to reduced index
+        bus_to_reduced_idx = {orig_idx: reduced_idx for reduced_idx, orig_idx in enumerate(alive_buses)}
+        b_idx_reduced = bus_to_reduced_idx[b_idx]
+
+        # ======== Reduce Ybuses ===========
+        Y0_reduced = Y0_np[np.ix_(alive_buses, alive_buses)]
+        Y1_reduced = Y1_np[np.ix_(alive_buses, alive_buses)]
+        Y2_reduced = Y2_np[np.ix_(alive_buses, alive_buses)]
+
+        # ======== Solve for Thevenin Impedances ===========
+        print("[DEBUG] Solving Ybuses for Thevenin impedance...")
+
+        e_vec = np.zeros(len(alive_buses), dtype=complex)
+        e_vec[b_idx_reduced] = 1.0
+
+        z0_col = np.linalg.solve(Y0_reduced, e_vec)
+        z1_col = np.linalg.solve(Y1_reduced, e_vec)
+        z2_col = np.linalg.solve(Y2_reduced, e_vec)
+
+        Z0 = z0_col[b_idx_reduced]
+        Z1 = z1_col[b_idx_reduced]
+        Z2 = z2_col[b_idx_reduced]
+
+        print(f"[DEBUG] Z0 at {faulted_bus}: {Z0}")
+        print(f"[DEBUG] Z1 at {faulted_bus}: {Z1}")
+        print(f"[DEBUG] Z2 at {faulted_bus}: {Z2}")
+
+        # ======== Prefault Voltage ===========
         V_prefault = self.buses[faulted_bus].vpu * np.exp(1j * np.deg2rad(self.buses[faulted_bus].delta))
-        print(f"V_prefault = {V_prefault}")
+        print(f"[DEBUG] Prefault Vpu at {faulted_bus}: {V_prefault:.6f}")
 
-        if fault_type == "slg":
-            denom = Z0_diag_inv + Z1_diag_inv + Z2_diag_inv + 3 * Zf
+        # ======== Calculate Fault Currents ===========
+        if fault_type.lower() == "slg":
+            denom = Z0 + Z1 + Z2 + 3 * Zf
             I_seq = V_prefault / denom
             I0 = I1 = I2 = I_seq
-
-        elif fault_type == "ll":
-            denom = Z1_diag_inv + Z2_diag_inv + Zf
+        elif fault_type.lower() == "ll":
+            denom = Z1 + Z2 + Zf
             I1 = V_prefault / denom
             I2 = -I1
             I0 = 0
-
-        elif fault_type == "dlg":
-            num = V_prefault * (Z1_diag_inv + Z2_diag_inv + Zf)
-            denom = Z0_diag_inv * (Z1_diag_inv + Z2_diag_inv + Zf) + Z1_diag_inv * Z2_diag_inv + Zf * (
-                        Z1_diag_inv + Z2_diag_inv)
+        elif fault_type.lower() == "dlg":
+            num = V_prefault * (Z1 + Z2 + Zf)
+            denom = (Z0 * (Z1 + Z2 + Zf)) + (Z1 * Z2) + (Zf * (Z1 + Z2))
             I0 = num / denom
             I1 = I0
             I2 = I0
-
         else:
-            raise ValueError("Invalid fault type")
+            raise ValueError(f"Invalid fault type '{fault_type}'")
 
-        # Convert sequence to phase
+        # ======== Sequence to Phase Transformation ===========
         a = np.exp(2j * np.pi / 3)
         T_inv = np.array([
             [1, 1, 1],
@@ -436,57 +465,49 @@ class Circuit:
         ])
         Iabc = T_inv @ np.array([I0, I1, I2])
 
-        #=============Calculating Voltages===========================================#
-        #this part needs to be completly redone!
-        #create a vector to hold all the voltages for each bus
-        volt_012 = np.zeros((3,len(self.buses)), dtype=complex) #zero sequence voltage, v0
+        print("\n[DEBUG] Fault currents (phases):")
+        for phase, val in zip(['A', 'B', 'C'], Iabc):
+            print(f"  Phase {phase}: {abs(val):.6f} p.u. @ {np.angle(val, deg=True):.2f}°")
 
-
-
-        #this is wrong!
-        #iterate through all buses to calculate the zero, negative, and positive sequence voltages
-        busK_zmatrix = np.zeros((3,3)) #create an array that will hold the impedance of the kth bus
-        I_n = np.array([[I0],[I1],[I2]]) #create a array containing sequence currents of the faulted bus
-        vF_matrix = np.array([[0],[1],[0]])
-
+        # ======== Calculate Voltages at All Buses ===========
+        volt_012 = np.zeros((3, len(ordered_buses)), dtype=complex)
+        busK_zmatrix = np.zeros((3, 3), dtype=complex)
+        I_n = np.array([[I0], [I1], [I2]])
+        vF_matrix = np.array([[0], [1], [0]])
 
         for bus_k in ordered_buses:
-            k_idx = bus_indices[bus_k] #get the index of the current bus
+            k_idx = bus_indices[bus_k]
+            if k_idx not in alive_buses:
+                volt_012[:, k_idx] = 0
+                continue
 
-            #obtain the sequence impedances for the kth bus
-            zkn0 = z0_np[k_idx][b_idx]
-            zkn1 = z1_np[k_idx][b_idx]
-            zkn2 = z2_np[k_idx][b_idx]
+            k_idx_reduced = bus_to_reduced_idx[k_idx]
 
-            #the diagonals of busK_zmatrix will hold the sequence impedances of the kth bus
-            busK_zmatrix[0,0] = zkn0
-            busK_zmatrix[1,1] = zkn1
-            busK_zmatrix[2,2] = zkn2
+            # Solve for mutual impedance terms
+            e_vec_k = np.zeros(len(alive_buses), dtype=complex)
+            e_vec_k[k_idx_reduced] = 1.0
 
-            vk_012 = vF_matrix-np.matmul(busK_zmatrix,I_n) #calulate the sequence voltages for the current bus
+            zkn0_col = np.linalg.solve(Y0_reduced, e_vec_k)
+            zkn1_col = np.linalg.solve(Y1_reduced, e_vec_k)
+            zkn2_col = np.linalg.solve(Y2_reduced, e_vec_k)
 
-            #add the voltages to the matrix holding all the voltages
-            volt_012[0,k_idx] = vk_012[0,0]
-            volt_012[1, k_idx] = vk_012[1,0]
-            volt_012[2, k_idx] = vk_012[2,0]
+            zkn0 = zkn0_col[b_idx_reduced]
+            zkn1 = zkn1_col[b_idx_reduced]
+            zkn2 = zkn2_col[b_idx_reduced]
 
+            busK_zmatrix[0, 0] = zkn0
+            busK_zmatrix[1, 1] = zkn1
+            busK_zmatrix[2, 2] = zkn2
 
-
-
-
-
+            vk_012 = vF_matrix - np.matmul(busK_zmatrix, I_n)
+            volt_012[0, k_idx] = vk_012[0, 0]
+            volt_012[1, k_idx] = vk_012[1, 0]
+            volt_012[2, k_idx] = vk_012[2, 0]
 
         phase_voltages = T_inv @ volt_012
 
-        print("\nPhase Voltage Matrix: Rows are Va, Vb, Vc, columns are buses\n")
-        print(phase_voltages)
-
-        print(f"\nAsymmetrical Fault Currents ({fault_type.upper()}) at {faulted_bus}:")
-        for phase, val in zip(['A', 'B', 'C'], Iabc):
-            mag = abs(val)
-            ang = np.angle(val, deg=True)
-            print(f"Phase {phase}: {mag:.4f} p.u., ∠ {ang:.2f}°")
+        print("\n[DEBUG] Phase voltages (rows=Va, Vb, Vc; columns=buses):\n")
+        print(np.round(phase_voltages, 5))
 
         return {"Ia": Iabc[0], "Ib": Iabc[1], "Ic": Iabc[2]}, (I0, I1, I2)
-
 
