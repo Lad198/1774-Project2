@@ -47,11 +47,16 @@ circuit1.add_transmission_line("Line 6", circuit1.buses["Bus4"].name, circuit1.b
                                circuit1.bundles["Bundle 1"].name, circuit1.geometry["Geometry 1"].name, 35)
 
 circuit1.add_generator_element("Generator 1", circuit1.buses["Bus1"].name, 100, circuit1.buses["Bus1"].vpu)
+print("\n",circuit1.generators["Generator 1"].name, " parameters:\n", circuit1.buses["Bus1"].bus_type, "P:", circuit1.real_power, circuit1.generators["Generator 1"].voltage_setpoint)
 circuit1.add_generator_element("Generator 2", circuit1.buses["Bus7"].name, 200, circuit1.buses["Bus7"].vpu)
+print(circuit1.generators["Generator 2"].name, " parameters:\n", circuit1.buses["Bus7"].bus_type, "P:", circuit1.real_power, circuit1.generators["Generator 2"].voltage_setpoint)
 
 circuit1.add_load_element("Load 1", circuit1.buses["Bus3"].name, 110, 50)
+print("\n", circuit1.loads["Load 1"].name, " parameters:\n", circuit1.buses["Bus3"].bus_type, "P:", circuit1.real_power, "\nQ:", circuit1.reactive_power)
 circuit1.add_load_element("Load 2", circuit1.buses["Bus4"].name, 100, 70)
+print(circuit1.loads["Load 2"].name, " parameters:\n", circuit1.buses["Bus4"].bus_type, "P:", circuit1.real_power, "\nQ:", circuit1.reactive_power)
 circuit1.add_load_element("Load 3", circuit1.buses["Bus5"].name, 100, 65)
+print(circuit1.loads["Load 3"].name, " parameters:\n", circuit1.buses["Bus5"].bus_type, "P:", circuit1.real_power, "\nQ:", circuit1.reactive_power)
 
 print("\nLine 1 Impedance pu: ", circuit1.transmission_lines["Line 1"].impedance_pu, "Series Admittance pu: ", circuit1.transmission_lines["Line 1"].series_admittance,
       "\nShunt Admittance pu: ", circuit1.transmission_lines["Line 1"].shunt_admittance, "\n",circuit1.transmission_lines["Line 1"].y_matrix)
