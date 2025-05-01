@@ -80,13 +80,12 @@ powerflow.solve(circuit1.buses, circuit1.ybus)
 
 circuit1.modify_y_bus()
 circuit1.calc_zero_negative_ybus()
-#fault_current,fault_voltage = circuit1.calculate_fault("Bus1")
+fault_current,fault_voltage = circuit1.calculate_fault("Bus1")
+i_f, fault_voltage_df = circuit1.calculate_fault("Bus1")
 
-print("\npositive ybus:\n",circuit1.ybus,"\n")
-print("\nnegative ybus:\n", circuit1.negative_ybus,"\n")
-print("\nzero ybus:\n", circuit1.zero_ybus,"\n")
-#print("\nfault_current:\n",fault_current)
-#print("\nfault_voltage:\n",fault_voltage)
+print("\npositive ybus:\n", circuit1.negative_ybus.round(3), "\n")
+print("\nnegative ybus:\n", circuit1.negative_ybus.round(3), "\n")
+print("\nzero ybus:\n", circuit1.zero_ybus.round(3), "\n")
 
 print(circuit1.ybus)
 

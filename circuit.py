@@ -337,29 +337,54 @@ class Circuit:
             bus1_idx = bus_indices[generator.bus.name] #obtain the bus for each generator, and modify the corresponding position in the y matrix
             self.ybus.iloc[bus1_idx,bus1_idx] += generator.sub_admittance
 
-
-    def calculate_fault(self,faulted_bus):
-        #calculates the current and voltage at each bus under fault conditions, as well as the zbus matrix
-        self.zbus=np.linalg.inv(self.ybus)
+    def calculate_fault(self, faulted_bus):
+        # Ensure Zbus is computed from modified Ybus (with subtransient effects already added)
+        self.zbus = np.linalg.inv(self.ybus)
         self.zbus = pd.DataFrame(self.zbus, index=self.ybus.keys(), columns=self.ybus.keys())
-        #bus_indices = {bus_name: idx for idx, bus_name in enumerate(self.buses)}
-        #fault_current=np.zeros(len(self.buses),dtype=complex)
-        fault_voltage=np.zeros(len(self.buses),dtype=complex)
 
-        #faulted_bus = list(self.buses.keys())[0]
-        #f_bus_index=self.buses[faulted_bus]
+        fault_voltage = np.zeros(len(self.buses), dtype=complex)
 
-        znn = self.zbus.loc[faulted_bus, faulted_bus]
-        i_f = 1.0 / znn
+        # Prefault voltage from power flow (magnitude and angle)
+        V_mag = self.buses[faulted_bus].vpu
+        V_ang_deg = self.buses[faulted_bus].delta
+        V_prefault = V_mag * np.exp(1j * np.deg2rad(V_ang_deg))
 
+        # Get Znn from Zbus
+        Znn = self.zbus.loc[faulted_bus, faulted_bus]
+
+        # If a generator exists at the faulted bus, include X'' in series with Znn
+        gen_at_fault = next((g for g in self.generators.values() if g.bus.name == faulted_bus), None)
+        if gen_at_fault:
+            Zth = Znn + gen_at_fault.subtransient_x  # subtransient_x is already in per-unit on system base
+        else:
+            Zth = Znn  # no additional reactance
+
+        # Fault current: If = V_prefault / Zth
+        i_f = V_prefault / Zth
+
+        # Print fault current in both rectangular and phasor form
+        print(f"\nfault_current:\n {i_f}")
+        print(f"Phasor form: {np.abs(i_f):.6f} ∠ {np.angle(i_f, deg=True):.4f}° pu")
+
+        # Calculate faulted voltages at all buses
         for idx, bus_name in enumerate(self.buses):
+            if bus_name == faulted_bus:
+                fault_voltage[idx] = 0  # Enforce 0 voltage at faulted bus
+            else:
+                Zkn = self.zbus.loc[bus_name, faulted_bus]
+                V_k = V_prefault - Zkn * i_f
+                fault_voltage[idx] = V_k
 
-            zkn = self.zbus.loc[bus_name, faulted_bus]
+        # Create DataFrame for voltage magnitudes and angles
+        voltage_df = pd.DataFrame({
+            'Voltage (p.u.)': np.abs(fault_voltage),
+            'Angle (deg)': np.angle(fault_voltage, deg=True)
+        }, index=self.buses.keys())
 
-            e_k=1-zkn/znn
-            fault_voltage[idx]=e_k
+        print("\nfault_voltage:")
+        print(voltage_df)
 
-        return i_f,fault_voltage
+        return i_f, voltage_df
 
     def calculate_asym_fault(self, fault_type, faulted_bus: str, Zf=0.0, dlg_phases='bc'):
         import numpy as np
