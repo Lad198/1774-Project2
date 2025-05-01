@@ -69,8 +69,9 @@ print("\nLine 6 Impedance pu: ", circuit1.transmission_lines["Line 6"].impedance
       "\nShunt Admittance pu: ", circuit1.transmission_lines["Line 6"].shunt_admittance, "\n",circuit1.transmission_lines["Line 6"].y_matrix)
 
 circuit1.calc_ybus()
+print("Ybus Matrix:\n",circuit1.ybus,"\n")
 jacobian = Jacobian(circuit1)
-print(jacobian.compute_jacobian())
+print("Jacobian Matrix:\n",jacobian.compute_jacobian())
 
 # Solve the power flow and print results
 powerflow = Power_Flow(circuit1, jacobian)

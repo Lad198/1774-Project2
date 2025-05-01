@@ -3,8 +3,14 @@
 class Bus {
     +name: str
     +base_kv: float
+    +vpu: float
+    +delta: float
+    +bus_type: str
+    +real_power: float
+    +reactive_power: float
     +index: int
- }
+    +set_voltage_and_delta(voltage: float, delta: float)
+}
 
 class Conductor {
     +name: str
@@ -12,6 +18,7 @@ class Conductor {
     +GMR: float
     +resistance: float
     +ampacity: float
+    +radius: float
 }
 
 class Geometry {
@@ -33,7 +40,7 @@ class Bundle {
     +conductor: Conductor
     +DSL: float
     +DSC: float
-    +Find_DSL_DSC()
+    +calc_dsl_dsc()
 }
 
 class Transformer {
@@ -43,12 +50,37 @@ class Transformer {
     +power_rating: float
     +impedance_percent: float
     +x_over_r_ratio: float
-    +impedance: float
-    +admittance: float
-    +y_matrix: Array [float]
+    +connection_type: str
+    +is_grounded: str
+    +z_ground: complex
+    +zseries: complex
+    +yseries: complex
+    +y_matrix: DataFrame
+    +zero_yprim: DataFrame
+    +negative_yprim: DataFrame
     +calc_impedance()
     +calc_admittance()
     +calc_y_matrix()
+    +create_zero_yprim()
+}
+
+class Generator {
+    +name: str
+    +bus: Bus
+    +voltage_setpoint: float
+    +mw_setpoint: float
+    +subtransient_x: complex
+    +sub_admittance: complex
+    +z_zero_total: complex
+    +z_negative: complex
+    +z_zero: complex
+    +ground_z: complex
+    +y_zero: complex
+    +y_negative: complex
+    +ground_status: str
+    +zero_yprim: DataFrame
+    +negative_yprim: DataFrame
+    +calc_y_matrix(y)
 }
 
 class TransmissionLine {
@@ -58,44 +90,100 @@ class TransmissionLine {
     +bundle: Bundle
     +geometry: Geometry
     +length: float
+    +is_grounded: bool
     +e_nought: float
     +r: float
-    +deq: float
-    +dsc: float
-    +dsl: float
-    +L: float
-    +C: float
-    +impedance: float
+    +impedance_pu: complex
+    +shunt_admittance: complex
+    +series_admittance: complex
+    +y_matrix: DataFrame
+    +z_positive: complex
+    +z_negative: complex
+    +z_zero: complex
+    +y_positive: complex
+    +y_negative: complex
+    +y_zero: complex
+    +zero_yprim: DataFrame
     +calc_impedance()
     +calc_admittance()
     +calc_y_matrix()
+    +calc_zero_yprim()
 }
-class Circuit {
-    - name: str
-    - buses: dict
-    - conductors: dict
-    - bundles: dict
-    - geometry: dict
-    - transformers: dict
-    - transmissionlines: dict
-    - ybus: dict
-    - bus_order: list
-    - real_power: dict
-    - reactive_power: dict
-    + __init__(name: str)
-    + add_Bus(name: str, bus_kv: float)
-    + add_Conductor(name: str, diam: float, GMR: float, resistance: float, ampacity: float)
-    + add_Bundle(name: str, num_conductors: float, spacing: float, conductor: Conductor)
-    + add_Geometry(name: str, xa: float, ya: float, xb: float, yb: float, xc: float, yc: float)
-    + add_Transformer(name: str, bus1: Bus, bus2: Bus, power_rating: float, impedance_percent: float, x_over_r_ratio: float)
-    + add_TransmissionLine(name: str, bus1: Bus, bus2: Bus, bundle: Bundle, geometry: Geometry, length: float)
-    + add_load_element(name: str, bus: str, real_power: float, reactive_power: float)
-    + add_generator_element(name: str, bus: str, real_power: float, per_unit_voltage: float)
-    + calc_ybus()
-    + get_voltages(buses, bus_name)
-    + compute_power_injection(buses, ybus)
-    + compute_power_mismatch(buses, ybus):
 
+class Load {
+    +name: str
+    +bus: Bus
+    +real_power: float
+    +reactive_power: float
+}
+
+class Circuit {
+    -name: str
+    -buses: dict
+    -conductors: dict
+    -bundles: dict
+    -geometry: dict
+    -transformers: dict
+    -transmission_lines: dict
+    -generators: dict
+    -loads: dict
+    -ybus: DataFrame
+    -zbus: DataFrame
+    -bus_order: list
+    -real_power: dict
+    -reactive_power: dict
+    -voltages: dict
+    -radians: int
+    +__init__(name: str)
+    +add_bus(name: str, bus_kv: float)
+    +add_conductor(name: str, diam: float, GMR: float, resistance: float, ampacity: float)
+    +add_bundle(name: str, num_conductors: float, spacing: float, conductor: str)
+    +add_geometry(name: str, xa: float, ya: float, xb: float, yb: float, xc: float, yc: float)
+    +add_transformer(...)
+    +add_transmission_line(...)
+    +add_load_element(...)
+    +add_generator_element(...)
+    +calc_ybus()
+    +calc_zero_negative_ybus()
+    +get_voltages(...)
+    +compute_power_injection(...)
+    +compute_power_mismatch(...)
+    +modify_y_bus()
+    +calculate_fault(...)
+    +calculate_asym_fault(...)
+}
+
+class Jacobian {
+    +circuit: Circuit
+    +buses: dict
+    +ybus: ndarray
+    +bus_order: list
+    +bus_types: dict
+    +voltages: ndarray
+    +angles: ndarray
+    +slack_bus: str
+    +pv_buses: list
+    +pq_buses: list
+    +non_slack_buses: list
+    +refresh_state()
+    +compute_jacobian() : DataFrame
+    +invert_jacobian() : DataFrame
+    +compute_J1() : ndarray
+    +compute_J2() : ndarray
+    +compute_J3() : ndarray
+    +compute_J4() : ndarray
+}
+
+class Power_Flow {
+    +circuit: Circuit
+    +jacobian: Jacobian
+    +__init__(circuit: Circuit, jacobian: Jacobian)
+    +solve(buses, ybus, tol=1e-9, max_iter=50) : dict
+}
+
+class Settings {
+    +frequency: float
+    +base_power: float
 }
 
 Circuit "1" *-- "many" Bus : contains
@@ -104,6 +192,9 @@ Circuit "1" *-- "many" Bundle : contains
 Circuit "1" *-- "many" Geometry : contains
 Circuit "1" *-- "many" Transformer : contains
 Circuit "1" *-- "many" TransmissionLine : contains
+Circuit "1" *-- "many" Generator : contains
+Circuit "1" *-- "many" Load : contains
+
 TransmissionLine "1" *-- "many" Bus : contains
 TransmissionLine "1" *-- "many" Conductor : contains
 TransmissionLine "1" *-- "many" Bundle : contains
